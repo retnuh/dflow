@@ -74,35 +74,34 @@ match_result(N, "bar-" ++ Rest) ->
 match_result(N, "foo" ++ [X | Rest]) when X >= $1, X=<$2 ->
     match_result(N, Rest).
 
+register_if_necessary() ->
+    register_if_necessary(whereis(?MODULE), self()).
+register_if_necessary(undefined, Self) ->
+    register(?MODULE, Self);
+register_if_necessary(X, X) ->
+    ok;
+register_if_necessary(Other, Self) ->
+    unregister(?MODULE),
+    register(?MODULE, Self).
+
 basic_test_() ->
-    {setup, fun setUp/0, fun tearDown/1, [
-     fun() ->
-             register(?MODULE, self()),
-             %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
-             dflow:add_datum({foo, ?MODULE}, "item1"),
-             dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
-             test_receive(12)
-     end
+    {setup, fun setUp/0, fun tearDown/1,
+     [
+      { "Basic", fun() ->
+                         register_if_necessary(),
+                         %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                         dflow:add_datum({foo, ?MODULE}, "item1"),
+                         dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
+                         test_receive(12)
+                 end },
+      { "Flaky",      fun() ->
+                              register_if_necessary(),
+                              %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                              dflow:add_datum({flaky, ?MODULE}, "item4"),
+                              test_receive(4)
+                      end }
     ]}.
 
-flaky_test_() ->
-    {setup, fun setUp/0, fun tearDown/1, [
-     fun() ->
-             register(?MODULE, self()),
-             %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
-             dflow:add_datum({flaky, ?MODULE}, "item4"),
-             test_receive(4)
-     end
-    ]}.
-
-%% nth_primes_test_() ->
-%%     {setup, fun start/0, fun(_) -> stop() end,
-%%      [
-%%       ?_assertEqual(2, nth_prime(1)),
-%%       ?_assertEqual(3, nth_prime(2)),
-%%       ?_assertEqual(17, nth_prime(7)),
-%%       ?_assertEqual(31, nth_prime(11))
-%%      ]}.
 
 %% next_primes_test_() ->
 %%     {setup, fun start/0, fun(_) -> stop() end,
