@@ -1,6 +1,10 @@
 -module(dflow_tests).
 -behaviour(dataflow).
--export([table_for_stage/1, functions_for_stage/1, next_stage/2, prepend/2, flaky/1]).
+%% dataflow fns
+-export([table_for_stage/1, is_stage_transient/1, functions_for_stage/1, next_stage/2]).
+%% exported fns 
+-export([prepend/2, flaky/1]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("dflow.hrl").
 
@@ -8,6 +12,11 @@
 
 table_for_stage(_) ->
     dflow_tests.
+
+is_stage_transient(foo) ->
+    true;
+is_stage_transient(_) ->
+    false.
 
 functions_for_stage(flaky) ->
     [{?MODULE, flaky, []}];
@@ -45,6 +54,27 @@ flaky(Data) ->
 
 %%% Test related functions
 
+match_result(N, "item" ++  [X]) when X >= $1, X=<$9 ->
+    N-1;
+match_result(N, "baz-" ++ Rest) ->
+    match_result(N, Rest);
+match_result(N, "extra-" ++ Rest) ->
+    match_result(N, Rest);
+match_result(N, "bar-" ++ Rest) ->
+    match_result(N, Rest);
+match_result(N, "foo" ++ [X , $- | Rest]) when X >= $1, X=<$2 ->
+    match_result(N, Rest).
+
+register_if_necessary() ->
+    register_if_necessary(whereis(?MODULE), self()).
+register_if_necessary(undefined, Self) ->
+    register(?MODULE, Self);
+register_if_necessary(X, X) ->
+    ok;
+register_if_necessary(_Other, Self) ->
+    unregister(?MODULE),
+    register(?MODULE, Self).
+
 setUp() ->
     mnesia:start(),
     ?debugVal(dflow:register([dflow_tests])),
@@ -70,27 +100,6 @@ test_receive(N) ->
     after 2000 ->
             error("Timeout")
     end.
-
-match_result(N, "item" ++  [X]) when X >= $1, X=<$9 ->
-    N-1;
-match_result(N, "baz-" ++ Rest) ->
-    match_result(N, Rest);
-match_result(N, "extra-" ++ Rest) ->
-    match_result(N, Rest);
-match_result(N, "bar-" ++ Rest) ->
-    match_result(N, Rest);
-match_result(N, "foo" ++ [X , $- | Rest]) when X >= $1, X=<$2 ->
-    match_result(N, Rest).
-
-register_if_necessary() ->
-    register_if_necessary(whereis(?MODULE), self()).
-register_if_necessary(undefined, Self) ->
-    register(?MODULE, Self);
-register_if_necessary(X, X) ->
-    ok;
-register_if_necessary(_Other, Self) ->
-    unregister(?MODULE),
-    register(?MODULE, Self).
 
 basic_test_() ->
     {setup, fun setUp/0, fun tearDown/1,
@@ -135,6 +144,15 @@ basic_test_() ->
                 ?debugVal(Bazes = dfq:completed({baz, ?MODULE})),
                 ?assertEqual(Bar1, Bar2),
                 ?assert(lists:all(fun(Baz) -> Baz#dflow.created < Bar1#dflow.completed end, Bazes))
+        end },
+      { "Transient data wiped out",
+        fun() ->
+                register_if_necessary(),
+                mnesia:clear_table(dflow_tests),
+                dflow:add_data({foo, ?MODULE}, ["item8", "item9"]),
+                test_receive(8),
+                ?debugVal(Foos = dfq:completed({foo, ?MODULE})),
+                ?assert(lists:all(fun(#dflow{data=D}) -> D =:= transient end, Foos))
         end },
       { "Incomplete re-injected",
         fun() ->

@@ -249,14 +249,21 @@ run_function_on_datum(DFlow, {Mod, Fun, XArgs}) ->
     dflow_worker:start(Mod, Fun, DFlow, XArgs).
 
 next_stage(#dflow{stage=CurStage,module=DFlowMod}=DFlow, Result) ->
-    io:format("Got results: ~p ~p (~p ~p)~n", [DFlow,Result,CurStage,DFlowMod]),
     Pairs = DFlowMod:next_stage(CurStage, Result),
     InjectTxns = lists:map(fun(P) -> inject_result(DFlowMod, P) end, Pairs),
-    UpdateTxn = fun() -> mnesia:write(DFlowMod:table_for_stage(CurStage),
-                                      DFlow#dflow{completed=now(),status=complete}, write)
+    UpdateTxn = fun() ->
+                        D = completed_dflow(DFlow, DFlowMod:is_stage_transient(CurStage)),
+                        mnesia:write(DFlowMod:table_for_stage(CurStage), D, write)
                 end,
     run_transactions([{UpdateTxn, ok} | InjectTxns]).
-    
+
+completed_dflow(DFlow, true) ->
+    %% Should this be the empty string instead of transient?
+    DFlow#dflow{completed=now(),status=complete,data=transient};
+completed_dflow(DFlow, false) ->
+    DFlow#dflow{completed=now(),status=complete}.
+
+
 inject_result(_CurDFlowMod, {{_Stage, _DFlowMod}=DFlow, Datum}) ->
     inject_datum(DFlow, Datum);
 inject_result(CurDFlowMod, {Stage, Datum}) when is_atom(Stage) ->

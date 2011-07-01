@@ -49,7 +49,7 @@ start(Mod, Fun, DFlow, XArgs) ->
 %% @end
 %%--------------------------------------------------------------------
 start_link(Mod, Fun, DFlow, XArgs) ->
-    {ok, Pid} = gen_server:start_link(?MODULE, [Mod, Fun], [{debug, [trace]}]),
+    {ok, Pid} = gen_server:start_link(?MODULE, [Mod, Fun], []),
     gen_server:cast(Pid, {compute, DFlow, XArgs}),
     {ok, Pid}.
 
@@ -70,7 +70,6 @@ start_link(Mod, Fun, DFlow, XArgs) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Module, Function]) ->
-    io:format("Starting worker ~p for ~p~n", [self(), {Module, Function}]),
     {ok, #state{module=Module,function=Function}}.
 
 %%--------------------------------------------------------------------
