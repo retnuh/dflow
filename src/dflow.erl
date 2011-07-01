@@ -8,6 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(dflow).
 -include("dflow.hrl").
+-include_lib("stdlib/include/qlc.hrl").
 -behaviour(gen_server).
 
 %% API
@@ -70,7 +71,21 @@ return_result(DFlow, Result) ->
 
 
 register(X) ->
-    register_tables(X, []).
+    Ret = register_tables(X, []),
+    restart_incomplete(X),
+    Ret.
+
+restart_incomplete([]) ->
+    ok;
+restart_incomplete([Table | Rest]) ->
+    Txn = fun() ->
+                  Q = qlc:q([ X || X <- mnesia:table(Table), X#dflow.status =:= created]),
+                  qlc:fold(fun(R, _) -> compute_stage(R) end, ok, Q)
+          end,
+    %% TODO spawn this? any point?
+    mnesia:transaction(Txn),
+    restart_incomplete(Rest).
+                               
 
 register_tables([], Acc) ->
     lists:reverse(Acc);
@@ -85,8 +100,7 @@ register_tables([Table | Rest], Acc) when is_atom(Table) ->
 % recognized as created?
 register_table(Table, Opts) ->
     try mnesia:table_info(Table, attributes) of
-        Attrs -> mnesia:wait_for_tables([Table], infinity),
-                 io:format("~p~n", [Attrs]),
+        _Attrs -> mnesia:wait_for_tables([Table], infinity),
                  exists                                    
     catch
         exit:{aborted,{no_exists,Table,attributes}} ->
@@ -113,7 +127,6 @@ register_table(Table, Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    io:format("Starting dflow~n"),    
     {ok, #state{workers=gb_trees:empty()}}.
 
 %%--------------------------------------------------------------------
@@ -209,15 +222,11 @@ inject_datum({Stage, DFlowMod}, Datum) ->
                       _ -> false
                   end
           end,
-    PostCommit = fun() ->
-                         Funs = DFlowMod:functions_for_stage(Stage),
-                         lists:foreach(fun(FunInfo) -> run_function_on_datum(Rec, FunInfo) end, Funs)
-                 end,
+    PostCommit = fun() -> compute_stage(Rec) end,
     { Txn, PostCommit }.
                   
 
 run_transactions(ReversedTxns) ->
-    io:format("Running ~p Txns~n", [length(ReversedTxns)]),
     Txns = lists:reverse(ReversedTxns),
     Txn = fun() -> lists:map(fun({T, _}) -> T() end, Txns) end,
     {atomic, Results} = mnesia:transaction(Txn),
@@ -230,6 +239,11 @@ inject(_, [], ReversedTxns) ->
 inject({_Stage, _Mod}=DFlow, [Datum | Rest], Txns) ->
     Funs = inject_datum(DFlow, Datum),
     inject(DFlow, Rest, [Funs|Txns]).
+
+compute_stage(#dflow{stage=Stage,module=DFlowMod}=DFlow) ->
+    Funs = DFlowMod:functions_for_stage(Stage),
+    lists:foreach(fun(FunInfo) -> run_function_on_datum(DFlow, FunInfo) end, Funs).
+    
 
 run_function_on_datum(DFlow, {Mod, Fun, XArgs}) ->
     dflow_worker:start(Mod, Fun, DFlow, XArgs).

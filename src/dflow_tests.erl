@@ -42,13 +42,13 @@ flaky(Data) ->
         1 -> timer:sleep(5), error("Faux failure");
         2 -> Data
     end.
-            
+
 %%% Test related functions
 
 setUp() ->
     mnesia:start(),
     ?debugVal(dflow:register([dflow_tests])),
-    % application:start(dflow),
+                                                % application:start(dflow),
     ok.
 
 tearDown(_) ->
@@ -56,8 +56,8 @@ tearDown(_) ->
         Pid when is_pid(Pid) -> unregister(?MODULE);
         undefined -> ok
     end,
-    % mnesia:stop(),
-    % application:stop(dflow),
+                                                % mnesia:stop(),
+                                                % application:stop(dflow),
     ok.
 
 test_receive(0) ->
@@ -95,41 +95,56 @@ register_if_necessary(_Other, Self) ->
 basic_test_() ->
     {setup, fun setUp/0, fun tearDown/1,
      [
-      { "Basic", fun() ->
-                         register_if_necessary(),
-                         %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
-                         dflow:add_datum({foo, ?MODULE}, "item1"),
-                         dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
-                         test_receive(12)
-                 end },
-      { "Flaky", fun() ->
-                         register_if_necessary(),
-                         %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
-                         dflow:add_datum({flaky, ?MODULE}, "item4"),
-                         test_receive(4)
-                 end },
-      { "Persistence", fun() ->
-                               register_if_necessary(),
-                               mnesia:clear_table(dflow_tests),
-                               dflow:add_datum({bar, ?MODULE}, "item5"),
-                               test_receive(2),
-                               ?assertEqual([ "item5" ], dfq:completed_data({bar, ?MODULE})),
-                               Bazes = dfq:completed_data({baz, ?MODULE}),
-                               ?debugVal(Bazes),
-                               ?assert(lists:member("bar-item5", Bazes)),
-                               ?assert(lists:member("extra-bar-item5", Bazes))
-                       end },
-      { "Dups are Discarded", fun() ->
-                                      register_if_necessary(),
-                                      mnesia:clear_table(dflow_tests),
-                                      dflow:add_datum({bar, ?MODULE}, "item6"),
-                                      test_receive(2),
-                                      ?debugVal([Bar1] = dfq:completed({bar, ?MODULE})),
-                                      dflow:add_datum({bar, ?MODULE}, "item6"),
-                                      ?assertEqual({message_queue_len, 0}, process_info(self(), message_queue_len)),
-                                      [Bar2] = dfq:completed({bar, ?MODULE}),
-                                      ?debugVal(Bazes = dfq:completed({baz, ?MODULE})),
-                                      ?assertEqual(Bar1, Bar2),
-                                      ?assert(lists:all(fun(Baz) -> Baz#dflow.created < Bar1#dflow.completed end, Bazes))
-                       end }
-    ]}.
+      { "Basic",
+        fun() ->
+                register_if_necessary(),
+                %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                dflow:add_datum({foo, ?MODULE}, "item1"),
+                dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
+                test_receive(12)
+        end },
+      { "Flaky",
+        fun() ->
+                register_if_necessary(),
+                %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                dflow:add_datum({flaky, ?MODULE}, "item4"),
+                test_receive(4)
+        end },
+      { "Persistence",
+        fun() ->
+                register_if_necessary(),
+                mnesia:clear_table(dflow_tests),
+                dflow:add_datum({bar, ?MODULE}, "item5"),
+                test_receive(2),
+                ?assertEqual([ "item5" ], dfq:completed_data({bar, ?MODULE})),
+                Bazes = dfq:completed_data({baz, ?MODULE}),
+                ?debugVal(Bazes),
+                ?assert(lists:member("bar-item5", Bazes)),
+                ?assert(lists:member("extra-bar-item5", Bazes))
+        end },
+      { "Dups are Discarded",
+        fun() ->
+                register_if_necessary(),
+                mnesia:clear_table(dflow_tests),
+                dflow:add_datum({bar, ?MODULE}, "item6"),
+                test_receive(2),
+                ?debugVal([Bar1] = dfq:completed({bar, ?MODULE})),
+                dflow:add_datum({bar, ?MODULE}, "item6"),
+                ?assertEqual({message_queue_len, 0}, process_info(self(), message_queue_len)),
+                [Bar2] = dfq:completed({bar, ?MODULE}),
+                ?debugVal(Bazes = dfq:completed({baz, ?MODULE})),
+                ?assertEqual(Bar1, Bar2),
+                ?assert(lists:all(fun(Baz) -> Baz#dflow.created < Bar1#dflow.completed end, Bazes))
+        end },
+      { "Incomplete re-injected",
+        fun() ->
+                register_if_necessary(),
+                mnesia:clear_table(dflow_tests),
+                mnesia:dirty_write(dflow_tests, #dflow{uuid="foo1",stage=foo,module=dflow_tests,
+                                                       status=created,created=now(), data="item7"}),
+                mnesia:dirty_write(dflow_tests, #dflow{uuid="foo2",stage=foo,module=dflow_tests,
+                                                       status=created,created=now(), data="item8"}),
+                dflow:register([dflow_tests]),
+                test_receive(8)
+        end }
+     ]}.
