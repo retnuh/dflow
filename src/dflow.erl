@@ -7,11 +7,11 @@
 %%% Created : 29 Jun 2011 by Hunter Kelly <retnuh@gmail.com>
 %%%-------------------------------------------------------------------
 -module(dflow).
-
+-include("dflow.hrl").
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, add_data/2, add_datum/2, return_result/2, stop/0]).
+-export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_cast/2, handle_info/2,  handle_call/3,
@@ -67,6 +67,35 @@ add_data({_Stage, _DFlowModule}=DFlow, Data) when is_list(Data) ->
 %%--------------------------------------------------------------------
 return_result(DFlow, Result) ->
     gen_server:cast(?SERVER, {result, DFlow, Result}).
+
+
+register(X) ->
+    register_tables(X, []).
+
+register_tables([], Acc) ->
+    lists:reverse(Acc);
+register_tables([{Table, Opts} | Rest], Acc) when is_list(Opts) ->
+    Res = register_table(Table, Opts),
+    register_tables(Rest, [Res | Acc]);
+register_tables([Table | Rest], Acc) when is_atom(Table) ->
+    Res = register_table(Table, []),
+    register_tables(Rest, [Res|Acc]).
+
+% TODO potential race cond between table being in ready state and not
+% recognized as created?
+register_table(Table, Opts) ->
+    try mnesia:table_info(Table, attributes) of
+        Attrs -> mnesia:wait_for_tables([Table], infinity),
+                 io:format("~p~n", [Attrs]),
+                 exists                                    
+    catch
+        exit:{aborted,{no_exists,Table,attributes}} ->
+            mnesia:create_table(Table, [ {attributes, record_info(fields, dflow)},
+                                         {record_name, dflow} | Opts]),
+            created
+    end.
+            
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -155,10 +184,10 @@ code_change(_OldVsn, State, _Extra) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast({add_datum, DFlow, Datum}, State) ->
-    inject_datum(DFlow, Datum),
+    run_transactions([inject_datum(DFlow, Datum)]),
     {noreply, State};
 handle_cast({add_data, DFlow, Data}, State) when is_list(Data) ->
-    inject(DFlow, Data),
+    inject(DFlow, Data, []),
     {noreply, State};
 handle_cast({result, DFlow, Result}, State) ->
     next_stage(DFlow, Result),
@@ -170,29 +199,50 @@ handle_cast(stop, State) ->
 %%% Internal functions
 %%%===================================================================
 
-inject_datum({Stage, DFlowMod}=DFlow, Datum) ->
-    % create initial record
-    Funs = DFlowMod:functions_for_stage(Stage),
-    lists:foreach(fun(FunInfo) -> run_function_on_datum(DFlow, Datum, FunInfo) end, Funs).
+inject_datum({Stage, DFlowMod}, Datum) ->
+    UUID = uuid(Stage, DFlowMod, Datum),
+    Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,created=now(),status=created},
+    Txn = fun() -> mnesia:write(DFlowMod:table_for_stage(Stage), Rec, write) end,
+    PostCommit = fun() ->
+                         Funs = DFlowMod:functions_for_stage(Stage),
+                         lists:foreach(fun(FunInfo) -> run_function_on_datum(Rec, FunInfo) end, Funs)
+                 end,
+    { Txn, PostCommit }.
+                  
 
-inject(_, []) ->
-    ok;
-inject({_Stage, _Mod}=DFlow, [Datum | Rest]) ->
-    inject_datum(DFlow, Datum),
-    inject(DFlow, Rest).
+run_transactions(ReversedTxns) ->
+    io:format("Running ~p Txns~n", [length(ReversedTxns)]),
+    Txns = lists:reverse(ReversedTxns),
+    Txn = fun() -> lists:foreach(fun({T, _}) -> T() end, Txns) end,
+    {atomic, _Result} = mnesia:transaction(Txn),
+    lists:foreach(fun({_,P}) when is_function(P) -> P();
+                     ({_, _}) -> ok
+                  end, Txns).
 
-run_function_on_datum(DFlow, Datum, {Mod, Fun, XArgs}) ->
-    dflow_worker:start(Mod, Fun, DFlow, [Datum | XArgs]).
+inject(_, [], ReversedTxns) ->
+    run_transactions(ReversedTxns);
+inject({_Stage, _Mod}=DFlow, [Datum | Rest], Txns) ->
+    Funs = inject_datum(DFlow, Datum),
+    inject(DFlow, Rest, [Funs|Txns]).
 
-next_stage({CurStage, DFlowMod}, Result) ->
-    %% save results, but after inject_results has been called (so if system crashes
-    %% before all new ones are recorded, etc.  Maybe created, computed, completed as
-    %% saved states?
+run_function_on_datum(DFlow, {Mod, Fun, XArgs}) ->
+    dflow_worker:start(Mod, Fun, DFlow, XArgs).
+
+next_stage(#dflow{stage=CurStage,module=DFlowMod}=DFlow, Result) ->
+    io:format("Got results: ~p ~p (~p ~p)~n", [DFlow,Result,CurStage,DFlowMod]),
     Pairs = DFlowMod:next_stage(CurStage, Result),
-    lists:foreach(fun(P) -> inject_result(DFlowMod, P) end, Pairs).
-
+    InjectTxns = lists:map(fun(P) -> inject_result(DFlowMod, P) end, Pairs),
+    UpdateTxn = fun() -> mnesia:write(DFlowMod:table_for_stage(CurStage),
+                                      DFlow#dflow{completed=now(),status=complete}, write)
+                end,
+    run_transactions([{UpdateTxn, ok} | InjectTxns]).
+    
 inject_result(_CurDFlowMod, {{_Stage, _DFlowMod}=DFlow, Datum}) ->
     inject_datum(DFlow, Datum);
 inject_result(CurDFlowMod, {Stage, Datum}) when is_atom(Stage) ->
     inject_datum({Stage, CurDFlowMod}, Datum).
 
+%% TODO possible bug if Data is not a string or binary
+uuid(Stage, DFlowMod, Data) ->
+    Name = "dflow-"++atom_to_list(Stage)++ "-" ++atom_to_list(DFlowMod),
+    uuid:to_string(uuid:sha(list_to_binary(Name), Data)).

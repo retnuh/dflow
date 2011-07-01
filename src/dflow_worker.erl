@@ -7,7 +7,7 @@
 %%% Created : 29 Jun 2011 by Hunter Kelly <retnuh@gmail.com>
 %%%-------------------------------------------------------------------
 -module(dflow_worker).
-
+-include("dflow.hrl").
 -behaviour(gen_server).
 
 %% API
@@ -30,11 +30,11 @@
 %% Starts a DFlow Worker that will compute one stage of a computation,
 %% then call the dflow process with the result.
 %%
-%% @spec start(Mod, Fun) -> {ok, Child} | {ok, Child, Info} | {error, Error}
+%% @spec start(Mod, Fun, DFlow, XArgs) -> {ok, Child} | {ok, Child, Info} | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start(Mod, Fun, DFlow, Args) ->
-    supervisor:start_child(dflow_worker_sup, [Mod, Fun, DFlow, Args]).
+start(Mod, Fun, DFlow, XArgs) ->
+    supervisor:start_child(dflow_worker_sup, [Mod, Fun, DFlow, XArgs]).
 
 %%%===================================================================
 %%% supervisor callbacks
@@ -48,9 +48,9 @@ start(Mod, Fun, DFlow, Args) ->
 %% @spec start_link(Mod, Fun) -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Mod, Fun, DFlow, Args) ->
+start_link(Mod, Fun, DFlow, XArgs) ->
     {ok, Pid} = gen_server:start_link(?MODULE, [Mod, Fun], [{debug, [trace]}]),
-    gen_server:cast(Pid, {compute, DFlow, Args}),
+    gen_server:cast(Pid, {compute, DFlow, XArgs}),
     {ok, Pid}.
 
 
@@ -100,8 +100,9 @@ handle_call(unused, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({compute, DFlow, Args}, #state{module=Mod,function=Fun}=State) ->
-    Result = apply(Mod, Fun, Args),
+handle_cast({compute, DFlow, XArgs}, #state{module=Mod,function=Fun}=State) ->
+    Data = DFlow#dflow.data,
+    Result = apply(Mod, Fun, [Data | XArgs]),
     dflow:return_result(DFlow, Result),
     {stop, normal, State}.
 

@@ -1,9 +1,12 @@
 -module(dflow_tests).
 -behaviour(dataflow).
--export([functions_for_stage/1, next_stage/2, prepend/2, flaky/1]).
+-export([table_for_stage/1, functions_for_stage/1, next_stage/2, prepend/2, flaky/1]).
 -include_lib("eunit/include/eunit.hrl").
 
 %%% dataflow API
+
+table_for_stage(_) ->
+    dflow_tests.
 
 functions_for_stage(flaky) ->
     [{?MODULE, flaky, []}];
@@ -35,13 +38,15 @@ flaky(Data) ->
     {A1,A2,A3} = now(),
     random:seed(A1, A2, A3),
     case random:uniform(2) of
-        1 -> error("Faux failure");
+        1 -> timer:sleep(5), error("Faux failure");
         2 -> Data
     end.
             
 %%% Test related functions
 
 setUp() ->
+    mnesia:start(),
+    ?debugVal(dflow:register([dflow_tests])),
     % application:start(dflow),
     ok.
 
@@ -50,6 +55,7 @@ tearDown(_) ->
         Pid when is_pid(Pid) -> unregister(?MODULE);
         undefined -> ok
     end,
+    % mnesia:stop(),
     % application:stop(dflow),
     ok.
 
@@ -63,7 +69,7 @@ test_receive(N) ->
             error("Timeout")
     end.
 
-match_result(N, "-item" ++  [X]) when X >= $1, X=<$9 ->
+match_result(N, "item" ++  [X]) when X >= $1, X=<$9 ->
     N-1;
 match_result(N, "baz-" ++ Rest) ->
     match_result(N, Rest);
@@ -71,7 +77,7 @@ match_result(N, "extra-" ++ Rest) ->
     match_result(N, Rest);
 match_result(N, "bar-" ++ Rest) ->
     match_result(N, Rest);
-match_result(N, "foo" ++ [X | Rest]) when X >= $1, X=<$2 ->
+match_result(N, "foo" ++ [X , $- | Rest]) when X >= $1, X=<$2 ->
     match_result(N, Rest).
 
 register_if_necessary() ->
@@ -80,7 +86,7 @@ register_if_necessary(undefined, Self) ->
     register(?MODULE, Self);
 register_if_necessary(X, X) ->
     ok;
-register_if_necessary(Other, Self) ->
+register_if_necessary(_Other, Self) ->
     unregister(?MODULE),
     register(?MODULE, Self).
 
@@ -94,12 +100,25 @@ basic_test_() ->
                          dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
                          test_receive(12)
                  end },
-      { "Flaky",      fun() ->
-                              register_if_necessary(),
-                              %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
-                              dflow:add_datum({flaky, ?MODULE}, "item4"),
-                              test_receive(4)
-                      end }
+      { "Flaky", fun() ->
+                         register_if_necessary(),
+                         %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                         dflow:add_datum({flaky, ?MODULE}, "item4"),
+                         test_receive(4)
+                 end },
+      { "Persistence", fun() ->
+                               register_if_necessary(),
+                               mnesia:clear_table(dflow_tests),
+                               %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
+                               dflow:add_datum({bar, ?MODULE}, "item5"),
+                               test_receive(2),
+                               timer:sleep(100), % Ick, not crazy about this!
+                               ?assertEqual([ "item5" ], dfq:completed({bar, ?MODULE})),
+                               Bazes = dfq:completed({baz, ?MODULE}),
+                               ?debugVal(Bazes),
+                               ?assert(lists:member("bar-item5", Bazes)),
+                               ?assert(lists:member("extra-bar-item5", Bazes))
+                       end }
     ]}.
 
 
