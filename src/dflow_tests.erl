@@ -2,6 +2,7 @@
 -behaviour(dataflow).
 -export([table_for_stage/1, functions_for_stage/1, next_stage/2, prepend/2, flaky/1]).
 -include_lib("eunit/include/eunit.hrl").
+-include("dflow.hrl").
 
 %%% dataflow API
 
@@ -60,6 +61,7 @@ tearDown(_) ->
     ok.
 
 test_receive(0) ->
+    timer:sleep(100), % Ick, not crazy about this!
     ok;
 test_receive(N) ->
     %% ?debugFmt("~p Waiting to receive ~p more items", [self(), N]),
@@ -109,31 +111,25 @@ basic_test_() ->
       { "Persistence", fun() ->
                                register_if_necessary(),
                                mnesia:clear_table(dflow_tests),
-                               %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
                                dflow:add_datum({bar, ?MODULE}, "item5"),
                                test_receive(2),
-                               timer:sleep(100), % Ick, not crazy about this!
-                               ?assertEqual([ "item5" ], dfq:completed({bar, ?MODULE})),
-                               Bazes = dfq:completed({baz, ?MODULE}),
+                               ?assertEqual([ "item5" ], dfq:completed_data({bar, ?MODULE})),
+                               Bazes = dfq:completed_data({baz, ?MODULE}),
                                ?debugVal(Bazes),
                                ?assert(lists:member("bar-item5", Bazes)),
                                ?assert(lists:member("extra-bar-item5", Bazes))
+                       end },
+      { "Dups are Discarded", fun() ->
+                                      register_if_necessary(),
+                                      mnesia:clear_table(dflow_tests),
+                                      dflow:add_datum({bar, ?MODULE}, "item6"),
+                                      test_receive(2),
+                                      ?debugVal([Bar1] = dfq:completed({bar, ?MODULE})),
+                                      dflow:add_datum({bar, ?MODULE}, "item6"),
+                                      ?assertEqual({message_queue_len, 0}, process_info(self(), message_queue_len)),
+                                      [Bar2] = dfq:completed({bar, ?MODULE}),
+                                      ?debugVal(Bazes = dfq:completed({baz, ?MODULE})),
+                                      ?assertEqual(Bar1, Bar2),
+                                      ?assert(lists:all(fun(Baz) -> Baz#dflow.created < Bar1#dflow.completed end, Bazes))
                        end }
     ]}.
-
-
-%% next_primes_test_() ->
-%%     {setup, fun start/0, fun(_) -> stop() end,
-%%      {generator, ?MODULE, next_primes_test_generator}
-%%     }.
-
-%% next_primes_test_generator() ->
-%%     next_primes_test_generator(first_prime(), [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]).
-%% next_primes_test_generator(_, []) ->
-%%     [];
-%% next_primes_test_generator({P, T}, [E | Rest]) ->
-%%     {generator, fun() ->
-%%                         [?_assertEqual(E, P),
-%%                          next_primes_test_generator(next_prime(T), Rest)]
-%%                 end
-%%     }.

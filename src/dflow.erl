@@ -202,7 +202,13 @@ handle_cast(stop, State) ->
 inject_datum({Stage, DFlowMod}, Datum) ->
     UUID = uuid(Stage, DFlowMod, Datum),
     Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,created=now(),status=created},
-    Txn = fun() -> mnesia:write(DFlowMod:table_for_stage(Stage), Rec, write) end,
+    Txn = fun() ->
+                  case mnesia:dirty_read(DFlowMod, UUID) of
+                      [] -> mnesia:write(DFlowMod:table_for_stage(Stage), Rec, write),
+                            true;
+                      _ -> false
+                  end
+          end,
     PostCommit = fun() ->
                          Funs = DFlowMod:functions_for_stage(Stage),
                          lists:foreach(fun(FunInfo) -> run_function_on_datum(Rec, FunInfo) end, Funs)
@@ -213,11 +219,11 @@ inject_datum({Stage, DFlowMod}, Datum) ->
 run_transactions(ReversedTxns) ->
     io:format("Running ~p Txns~n", [length(ReversedTxns)]),
     Txns = lists:reverse(ReversedTxns),
-    Txn = fun() -> lists:foreach(fun({T, _}) -> T() end, Txns) end,
-    {atomic, _Result} = mnesia:transaction(Txn),
-    lists:foreach(fun({_,P}) when is_function(P) -> P();
-                     ({_, _}) -> ok
-                  end, Txns).
+    Txn = fun() -> lists:map(fun({T, _}) -> T() end, Txns) end,
+    {atomic, Results} = mnesia:transaction(Txn),
+    lists:zipwith(fun({_,P}, true) when is_function(P) -> P();
+                     ({_, _}, _) -> ok
+                  end, Txns, Results).
 
 inject(_, [], ReversedTxns) ->
     run_transactions(ReversedTxns);
