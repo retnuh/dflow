@@ -34,7 +34,9 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], [{debug, [trace]}]).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], [
+                                                         % {debug, [trace]}
+                                                         ]).
 
 stop() ->
     gen_server:cast(?SERVER, stop).
@@ -242,8 +244,13 @@ inject({_Stage, _Mod}=DFlow, [Datum | Rest], Txns) ->
 
 compute_stage(#dflow{stage=Stage,module=DFlowMod}=DFlow) ->
     Funs = DFlowMod:functions_for_stage(Stage),
+    compute_stage(DFlow, Funs).
+compute_stage(#dflow{}=DFlow, identity) ->
+    next_stage(DFlow, DFlow#dflow.data);
+compute_stage(DFlow, none) ->
+    complete_stage(DFlow, []);
+compute_stage(#dflow{}=DFlow, Funs) when is_list(Funs) ->
     lists:foreach(fun(FunInfo) -> run_function_on_datum(DFlow, FunInfo) end, Funs).
-    
 
 run_function_on_datum(DFlow, {Mod, Fun, XArgs}) ->
     dflow_worker:start(Mod, Fun, DFlow, XArgs).
@@ -251,11 +258,15 @@ run_function_on_datum(DFlow, {Mod, Fun, XArgs}) ->
 next_stage(#dflow{stage=CurStage,module=DFlowMod}=DFlow, Result) ->
     Pairs = DFlowMod:next_stage(CurStage, Result),
     InjectTxns = lists:map(fun(P) -> inject_result(DFlowMod, P) end, Pairs),
+    complete_stage(DFlow, InjectTxns).
+
+
+complete_stage(#dflow{stage=CurStage,module=DFlowMod}=DFlow, Txns) ->
     UpdateTxn = fun() ->
                         D = completed_dflow(DFlow, DFlowMod:is_stage_transient(CurStage)),
                         mnesia:write(DFlowMod:table_for_stage(CurStage), D, write)
                 end,
-    run_transactions([{UpdateTxn, ok} | InjectTxns]).
+    run_transactions([{UpdateTxn, ok} | Txns]).
 
 completed_dflow(DFlow, true) ->
     %% Should this be the empty string instead of transient?

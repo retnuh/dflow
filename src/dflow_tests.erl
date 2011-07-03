@@ -25,8 +25,17 @@ functions_for_stage(foo) ->                     % Demonstrate that a stage can h
 functions_for_stage(bar) ->
     [{?MODULE, prepend, ["bar"]}];
 functions_for_stage(baz) ->
-    [{?MODULE, prepend, ["baz"]}].
+    [{?MODULE, prepend, ["baz"]}];
+functions_for_stage(identity) ->
+    identity;
+functions_for_stage(none) ->
+    % This is a bit of a hack for the test
+    ?MODULE ! "item1",
+    none.
 
+%% Note that I don't need a next_stage for "none"
+next_stage(identity, Result) ->
+    [{none, Result}];
 next_stage(flaky, Result) ->
     [{foo, Result}];
 next_stage(foo, Result) ->
@@ -34,21 +43,19 @@ next_stage(foo, Result) ->
 next_stage(bar, Result) ->
     [{baz, Result}, {baz, "extra-" ++ Result}]; % results can produce multiple new functions
 next_stage(baz, Result) ->
-    %% ?debugVal(Result),
     ?MODULE ! Result,
     [].
 
 %%% Functions that actually "do stuff"
 
 prepend(Data, Prefix) ->
-    %%    ?debugFmt("Prefix: ~p-~p", [Prefix, Data]),
     Prefix ++ "-" ++ Data.
 
 flaky(Data) ->
     {A1,A2,A3} = now(),
     random:seed(A1, A2, A3),
     case random:uniform(2) of
-        1 -> timer:sleep(5), error("Faux failure");
+        1 -> timer:sleep(100), error("Faux failure");
         2 -> Data
     end.
 
@@ -77,8 +84,8 @@ register_if_necessary(_Other, Self) ->
 
 setUp() ->
     mnesia:start(),
-    ?debugVal(dflow:register([dflow_tests])),
-                                                % application:start(dflow),
+    dflow:register([dflow_tests]),
+    %% application:start(dflow),
     ok.
 
 tearDown(_) ->
@@ -86,15 +93,14 @@ tearDown(_) ->
         Pid when is_pid(Pid) -> unregister(?MODULE);
         undefined -> ok
     end,
-                                                % mnesia:stop(),
-                                                % application:stop(dflow),
+    %% mnesia:stop(),
+    %% application:stop(dflow),
     ok.
 
 test_receive(0) ->
     timer:sleep(100), % Ick, not crazy about this!
     ok;
 test_receive(N) ->
-    %% ?debugFmt("~p Waiting to receive ~p more items", [self(), N]),
     receive
         Val -> X = match_result(N, Val), test_receive(X)
     after 2000 ->
@@ -107,7 +113,6 @@ basic_test_() ->
       { "Basic",
         fun() ->
                 register_if_necessary(),
-                %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
                 dflow:add_datum({foo, ?MODULE}, "item1"),
                 dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
                 test_receive(12)
@@ -115,7 +120,6 @@ basic_test_() ->
       { "Flaky",
         fun() ->
                 register_if_necessary(),
-                %% ?debugFmt("Registered ~p on ~p", [?MODULE, self()]),
                 dflow:add_datum({flaky, ?MODULE}, "item4"),
                 test_receive(4)
         end },
@@ -127,7 +131,7 @@ basic_test_() ->
                 test_receive(2),
                 ?assertEqual([ "item5" ], dfq:completed_data({bar, ?MODULE})),
                 Bazes = dfq:completed_data({baz, ?MODULE}),
-                ?debugVal(Bazes),
+                Bazes,
                 ?assert(lists:member("bar-item5", Bazes)),
                 ?assert(lists:member("extra-bar-item5", Bazes))
         end },
@@ -137,11 +141,11 @@ basic_test_() ->
                 mnesia:clear_table(dflow_tests),
                 dflow:add_datum({bar, ?MODULE}, "item6"),
                 test_receive(2),
-                ?debugVal([Bar1] = dfq:completed({bar, ?MODULE})),
+                [Bar1] = dfq:completed({bar, ?MODULE}),
                 dflow:add_datum({bar, ?MODULE}, "item6"),
                 ?assertEqual({message_queue_len, 0}, process_info(self(), message_queue_len)),
                 [Bar2] = dfq:completed({bar, ?MODULE}),
-                ?debugVal(Bazes = dfq:completed({baz, ?MODULE})),
+                Bazes = dfq:completed({baz, ?MODULE}),
                 ?assertEqual(Bar1, Bar2),
                 ?assert(lists:all(fun(Baz) -> Baz#dflow.created < Bar1#dflow.completed end, Bazes))
         end },
@@ -151,7 +155,7 @@ basic_test_() ->
                 mnesia:clear_table(dflow_tests),
                 dflow:add_data({foo, ?MODULE}, ["item8", "item9"]),
                 test_receive(8),
-                ?debugVal(Foos = dfq:completed({foo, ?MODULE})),
+                Foos = dfq:completed({foo, ?MODULE}),
                 ?assert(lists:all(fun(#dflow{data=D}) -> D =:= transient end, Foos))
         end },
       { "Incomplete re-injected",
@@ -164,5 +168,14 @@ basic_test_() ->
                                                        status=created,created=now(), data="item8"}),
                 dflow:register([dflow_tests]),
                 test_receive(8)
+        end },
+      { "Identity & None",
+        fun() ->
+                register_if_necessary(),
+                mnesia:clear_table(dflow_tests),
+                dflow:add_datum({identity, ?MODULE}, "item1"),
+                test_receive(1),
+                ?assertEqual(1, length(dfq:completed({identity, ?MODULE}))),
+                ?assertEqual(1, length(dfq:completed({none, ?MODULE})))
         end }
      ]}.
