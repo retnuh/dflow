@@ -12,7 +12,7 @@
 -include_lib("stdlib/include/qlc.hrl").
 
 %% API
--export([completed_data/1, completed/1]).
+-export([completed_data/1, completed/1, all_data/1, all/1]).
 
 %%%===================================================================
 %%% API
@@ -29,6 +29,18 @@ completed({Stage, Module}) ->
     do(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                      X#dflow.module =:= Module, X#dflow.status =:= complete
        ])).  
+
+all_data({Stage, Module}) ->
+    Table = Module:table_for_stage(Stage),
+    do(qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+                    X#dflow.module =:= Module
+       ])).  
+
+all({Stage, Module}) ->
+    Table = Module:table_for_stage(Stage),
+    do(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+                     X#dflow.module =:= Module
+       ])).
 
 %%%===================================================================
 %%% Internal functions

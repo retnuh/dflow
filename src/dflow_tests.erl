@@ -83,9 +83,9 @@ register_if_necessary(_Other, Self) ->
     register(?MODULE, Self).
 
 setUp() ->
-    mnesia:start(),
+    application:start(mnesia),
+    application:start(dflow),
     dflow:register([dflow_tests]),
-    %% application:start(dflow),
     ok.
 
 tearDown(_) ->

@@ -5,7 +5,8 @@
   {registered, [dflow, dflow_worker_sup, dflow_sup]},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib, 
+                  mnesia
                  ]},
   {mod, { dflow_app, []}},
   {env, []}

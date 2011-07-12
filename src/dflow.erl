@@ -13,6 +13,7 @@
 
 %% API
 -export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
+-export([uuid/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_cast/2, handle_info/2,  handle_call/3,
@@ -280,7 +281,6 @@ inject_result(_CurDFlowMod, {{_Stage, _DFlowMod}=DFlow, Datum}) ->
 inject_result(CurDFlowMod, {Stage, Datum}) when is_atom(Stage) ->
     inject_datum({Stage, CurDFlowMod}, Datum).
 
-%% TODO possible bug if Data is not a string or binary
 uuid(Stage, DFlowMod, Data) ->
     Name = "dflow-"++atom_to_list(Stage)++ "-" ++atom_to_list(DFlowMod),
-    uuid:to_string(uuid:sha(list_to_binary(Name), Data)).
+    uuid:to_string(uuid:sha(list_to_binary(Name), term_to_binary(Data))).

@@ -1,0 +1,11 @@
+2011-07-12  Hunter Kelly  <retnuh@gmail.com>
+
+	* src/dfq.erl: (all, all_data): Added.
+
+	* src/dflow_tests.erl: (setUp): start applications.
+
+	* src/dflow.erl: export uuid.
+	(uuid): use term_to_binary to allow arbitrary data.
+
+	* src/dflow.app.src: Add mnesia application
+
