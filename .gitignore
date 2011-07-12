@@ -2,3 +2,4 @@
 ebin/dflow.app
 *.dump
 deps/
+.eunit/
