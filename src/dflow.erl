@@ -218,9 +218,10 @@ handle_cast(stop, State) ->
 inject_datum({Stage, DFlowMod}, Datum) ->
     UUID = uuid(Stage, DFlowMod, Datum),
     Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,created=now(),status=created},
+    Table = DFlowMod:table_for_stage(Stage),
     Txn = fun() ->
-                  case mnesia:dirty_read(DFlowMod, UUID) of
-                      [] -> mnesia:write(DFlowMod:table_for_stage(Stage), Rec, write),
+                  case mnesia:dirty_read(Table, UUID) of
+                      [] -> mnesia:write(Table, Rec, write),
                             true;
                       _ -> false
                   end
