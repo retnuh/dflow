@@ -25,7 +25,7 @@ start_link() ->
 %% TODO: These timeout values should be paramaterized, in app or something.
 %% Same for 5000 in CHILD Macro (shutdown)
 init([]) ->
-    io:format("Starting dflow_sup"),
+    %% io:format("Starting dflow_sup"),
     WorkerSup = ?CHILD(dflow_worker_sup, supervisor),
     DFlowServer = ?CHILD(dflow, worker),
     {ok, { {rest_for_one, 5, 10}, [WorkerSup, DFlowServer]} }.

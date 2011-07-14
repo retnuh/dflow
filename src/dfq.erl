@@ -16,19 +16,29 @@
 
 %% API
 -export([completed_data/1, completed/1, all_data/1, all/1, exists/2,
-         delete_matching_data/2, filter_data/2]).
+         delete_matching_data/2, filter_data/2, delete/2]).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-exists(Data, {Stage, Module}) ->
+exists(Data, {Stage, Module}) when not is_record(Data, dflow) ->
     Table = Module:table_for_stage(Stage),
     UUID = dflow:uuid(Stage, Module, Data),
     case mnesia:dirty_read(Table, UUID) of
         [] -> false;
         _ -> true
     end.
+
+delete(Data, {Stage, Module}) when not is_record(Data, dflow) ->
+    Table = Module:table_for_stage(Stage),
+    UUID = dflow:uuid(Stage, Module, Data),
+    do(fun() ->
+               case mnesia:dirty_read(Table, UUID) of
+                   [] -> false;
+                   [X] -> mnesia:delete(Table, UUID, write), X
+               end
+       end).
 
 delete_matching_data(Predicate, {Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
@@ -42,31 +52,31 @@ filter_data(Predicate, {Stage, Module}) ->
     Q = qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                      X#dflow.module =:= Module, X#dflow.status =:= complete,
                      Predicate(X#dflow.data)]),
-    do(Q).
+    do_q(Q).
 
 
     
 completed_data({Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
-    do(qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+    do_q(qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                     X#dflow.module =:= Module, X#dflow.status =:= complete
        ])).  
 
 completed({Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
-    do(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+    do_q(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                      X#dflow.module =:= Module, X#dflow.status =:= complete
        ])).  
 
 all_data({Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
-    do(qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+    do_q(qlc:q([ X#dflow.data || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                     X#dflow.module =:= Module
        ])).  
 
 all({Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
-    do(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+    do_q(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
                      X#dflow.module =:= Module
        ])).
 
@@ -78,6 +88,10 @@ fold(P, Acc0, Q) ->
     {atomic, Val} = mnesia:transaction(fun() -> qlc:fold(P, Acc0, Q) end),
     Val.
 
-do(Q) ->
+do(F) when is_function(F) ->
+    {atomic, Val} = mnesia:transaction(F),
+    Val.
+
+do_q(Q) ->
     {atomic, Val} = mnesia:transaction(fun() -> qlc:e(Q) end),
     Val.

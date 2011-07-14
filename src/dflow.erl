@@ -13,7 +13,7 @@
 
 %% API
 -export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
--export([uuid/3]).
+-export([uuid/3, sync/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_cast/2, handle_info/2,  handle_call/3,
@@ -41,6 +41,9 @@ start_link() ->
 
 stop() ->
     gen_server:cast(?SERVER, stop).
+
+sync() ->
+    gen_server:call(?SERVER, sync).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -146,6 +149,8 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_call(sync, _From, State) ->
+    {reply, ok, State};
 handle_call(unused, _From, State) ->
      {noreply, State}.
 
