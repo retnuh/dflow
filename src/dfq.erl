@@ -16,11 +16,28 @@
 
 %% API
 -export([completed_data/1, completed/1, all_data/1, all/1, exists/2,
-         delete_matching_data/2, filter_data/2, delete/2]).
+         delete_matching_data/2, filter_data/2, delete/2, first/1]).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+first({Stage, Module}) ->
+    Table = Module:table_for_stage(Stage),
+    Rec = do_async_dirty(
+            fun() ->
+                    QH = qlc:q([ X || X <- mnesia:table(Table),
+                                      X#dflow.stage =:= Stage,
+                                      X#dflow.module =:= Module]),
+                    QC = qlc:cursor(QH),
+                    Val = qlc:next_answers(QC, 1),
+                    qlc:delete_cursor(QC),
+                    Val
+            end),
+    case Rec of
+        [] -> none;
+        [X] -> {ok, X#dflow.data}
+    end.
 
 exists(Data, {Stage, Module}) when not is_record(Data, dflow) ->
     Table = Module:table_for_stage(Stage),
@@ -91,6 +108,9 @@ fold(P, Acc0, Q) ->
 do(F) when is_function(F) ->
     {atomic, Val} = mnesia:transaction(F),
     Val.
+
+do_async_dirty(F) when is_function(F) ->
+    mnesia:async_dirty(F).
 
 do_q(Q) ->
     {atomic, Val} = mnesia:transaction(fun() -> qlc:e(Q) end),
