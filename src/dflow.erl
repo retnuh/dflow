@@ -53,7 +53,7 @@ sync() ->
 %% @end
 %%--------------------------------------------------------------------
 add_datum({_Stage, _DFlowModule}=DFlow, Datum) ->
-    gen_server:cast(?SERVER, {add_datum, DFlow, Datum}).
+    gen_server:call(?SERVER, {add_datum, DFlow, Datum}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -151,8 +151,10 @@ init([]) ->
 %%--------------------------------------------------------------------
 handle_call(sync, _From, State) ->
     {reply, ok, State};
-handle_call(unused, _From, State) ->
-     {noreply, State}.
+handle_call({add_datum, DFlow, Datum}, _From, State) ->
+    [Res] = run_transactions([inject_datum(DFlow, Datum)]),
+    {reply, Res, State}.
+
 
 
 %%--------------------------------------------------------------------
@@ -204,9 +206,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({add_datum, DFlow, Datum}, State) ->
-    run_transactions([inject_datum(DFlow, Datum)]),
-    {noreply, State};
 handle_cast({add_data, DFlow, Data}, State) when is_list(Data) ->
     inject(DFlow, Data, []),
     {noreply, State};
@@ -227,8 +226,8 @@ inject_datum({Stage, DFlowMod}, Datum) ->
     Txn = fun() ->
                   case mnesia:dirty_read(Table, UUID) of
                       [] -> mnesia:write(Table, Rec, write),
-                            true;
-                      _ -> false
+                            {inserted, Rec};
+                      [X] -> {exists, X}
                   end
           end,
     PostCommit = fun() -> compute_stage(Rec) end,
@@ -239,8 +238,8 @@ run_transactions(ReversedTxns) ->
     Txns = lists:reverse(ReversedTxns),
     Txn = fun() -> lists:map(fun({T, _}) -> T() end, Txns) end,
     {atomic, Results} = mnesia:transaction(Txn),
-    lists:zipwith(fun({_,P}, true) when is_function(P) -> P();
-                     ({_, _}, _) -> ok
+    lists:zipwith(fun({_,P}, {inserted, _}=T) when is_function(P) -> P(), T;
+                     ({_, _}, R) -> {exists, R}
                   end, Txns, Results).
 
 inject(_, [], ReversedTxns) ->

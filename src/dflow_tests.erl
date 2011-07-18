@@ -113,9 +113,17 @@ basic_test_() ->
       { "Basic",
         fun() ->
                 register_if_necessary(),
-                dflow:add_datum({foo, ?MODULE}, "item1"),
+                UUID = dflow:uuid(foo, ?MODULE, "item1"),
+                R = dflow:add_datum({foo, ?MODULE}, "item1"),
                 dflow:add_data({foo, ?MODULE}, ["item2", "item3"]),
-                test_receive(12)
+                test_receive(12),
+                ?debugVal(R),
+                {inserted, Result} = R,
+                ?assertEqual(UUID, Result#dflow.uuid),
+                ?assertEqual("item1", Result#dflow.data),
+                ?assertEqual(foo, Result#dflow.stage),
+                ?assertEqual(?MODULE, Result#dflow.module),
+                ?assertEqual(created, Result#dflow.status)
         end },
       { "Flaky",
         fun() ->
@@ -142,7 +150,7 @@ basic_test_() ->
                 dflow:add_datum({bar, ?MODULE}, "item6"),
                 test_receive(2),
                 [Bar1] = dfq:completed({bar, ?MODULE}),
-                dflow:add_datum({bar, ?MODULE}, "item6"),
+                {exists, _} = dflow:add_datum({bar, ?MODULE}, "item6"),
                 ?assertEqual({message_queue_len, 0}, process_info(self(), message_queue_len)),
                 [Bar2] = dfq:completed({bar, ?MODULE}),
                 Bazes = dfq:completed({baz, ?MODULE}),
