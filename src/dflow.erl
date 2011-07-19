@@ -13,7 +13,7 @@
 
 %% API
 -export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
--export([uuid/3, sync/0]).
+-export([uuid/3, sync/0, add_raw/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_cast/2, handle_info/2,  handle_call/3,
@@ -64,6 +64,9 @@ add_datum({_Stage, _DFlowModule}=DFlow, Datum) ->
 %%--------------------------------------------------------------------
 add_data({_Stage, _DFlowModule}=DFlow, Data) when is_list(Data) ->
     gen_server:cast(?SERVER, {add_data, DFlow, Data}).
+
+add_raw(Data) when is_record(Data, dflow) ->
+    gen_server:cast(?SERVER, {add_raw, Data}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -209,6 +212,10 @@ code_change(_OldVsn, State, _Extra) ->
 handle_cast({add_data, DFlow, Data}, State) when is_list(Data) ->
     inject(DFlow, Data, []),
     {noreply, State};
+handle_cast({add_raw, #dflow{stage=Stage,module=DFlowMod}=DFlow}, State) ->
+    Table = DFlowMod:table_for_stage(Stage),
+    {atomic, _} = mnesia:transaction(fun()-> mnesia:write(Table, DFlow, write) end),
+    {noreply, State};
 handle_cast({result, DFlow, Result}, State) ->
     next_stage(DFlow, Result),
     {noreply, State};
@@ -218,7 +225,6 @@ handle_cast(stop, State) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
 inject_datum({Stage, DFlowMod}, Datum) ->
     UUID = uuid(Stage, DFlowMod, Datum),
     Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,created=now(),status=created},
