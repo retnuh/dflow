@@ -17,7 +17,7 @@
 %% API
 -export([completed_data/1, completed/1, all_data/1, all/1, exists/2,
          delete_matching_data/2, filter_data/2, delete/2, first/1,
-         delete_uuid/2]).
+         delete_uuid/2, delete_incomplete/2]).
 
 %%%===================================================================
 %%% API
@@ -48,6 +48,10 @@ exists(Data, {Stage, Module}) when not is_record(Data, dflow) ->
         _ -> true
     end.
 
+delete_incomplete(Module, Table) ->
+    Q = qlc:q([ X || X <- mnesia:table(Table), X#dflow.module =:= Module, X#dflow.status =/= complete]),
+    fold(fun(D, Acc) -> mnesia:delete(Table, D#dflow.uuid, write), [D|Acc] end, [], Q).
+    
 delete_uuid(UUID, {Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
     do(fun() -> mnesia:delete(Table, UUID, write) end).
