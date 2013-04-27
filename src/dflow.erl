@@ -110,11 +110,16 @@ register_tables([Table | Rest], Acc) when is_atom(Table) ->
 register_table(Table, Opts) ->
     try mnesia:table_info(Table, attributes) of
         _Attrs -> mnesia:wait_for_tables([Table], infinity),
-                 exists                                    
+        io:format("Dflow: found table ~p with attrs: ~p~n",[Table,_Attrs]),
+        exists                                    
     catch
         exit:{aborted,{no_exists,Table,attributes}} ->
-            mnesia:create_table(Table, [ {attributes, record_info(fields, dflow)},
+            io:format("Dflow: table appears not to exist, creating: ~p ~p~n",
+                      [Table,  [ {attributes, record_info(fields, dflow)},
+                                         {record_name, dflow} | Opts]]),                                               
+            _Ret = mnesia:create_table(Table, [ {attributes, record_info(fields, dflow)},
                                          {record_name, dflow} | Opts]),
+            io:format("Dflow: create_table for ~p returned ~p~n",[Table,_Ret]),
             created
     end.
             
