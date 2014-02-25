@@ -17,7 +17,8 @@
 %% API
 -export([completed_data/1, completed/1, all_data/1, all/1, exists/2,
          delete_matching_data/2, filter_data/2, delete/2, first/1,
-         delete_uuid/2, delete_incomplete/2, uuid_data/2, uuid_dflow/2]).
+         delete_uuid/2, delete_incomplete/2, delete_transients/2,
+         uuid_data/2, uuid_dflow/2]).
 
 %%%===================================================================
 %%% API
@@ -62,6 +63,10 @@ uuid_dflow(UUID, {Stage, Module}) ->
 delete_incomplete(Module, Table) ->
     Q = qlc:q([ X || X <- mnesia:table(Table), X#dflow.module =:= Module, X#dflow.status =/= complete]),
     fold(fun(D, Acc) -> mnesia:delete(Table, D#dflow.uuid, write), [D|Acc] end, [], Q).
+    
+delete_transients(Module, Table) ->
+    Q = qlc:q([ X || X <- mnesia:table(Table), X#dflow.module =:= Module, X#dflow.data =:= transient]),
+    fold(fun(D, _) -> mnesia:delete(Table, D#dflow.uuid, write), none end, none, Q).
     
 delete_uuid(UUID, {Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
@@ -125,6 +130,16 @@ fold(P, Acc0, Q) ->
     {atomic, Val} = mnesia:transaction(fun() -> qlc:fold(P, Acc0, Q) end),
     Val.
 
+%% broken
+foreach(P, Q) ->
+    Val = mnesisa:transaction(
+                      fun() ->
+                              {atomic, R} = qlc:e(Q),
+                              lists:foreach(P, R)
+                      end),
+    io:format("Val: ~p~n",[Val]),
+    Val.
+                                                
 do(F) when is_function(F) ->
     {atomic, Val} = mnesia:transaction(F),
     Val.
