@@ -18,7 +18,7 @@
 -export([completed_data/1, completed/1, all_data/1, all/1, exists/2,
          delete_matching_data/2, filter_data/2, delete/2, first/1,
          delete_uuid/2, delete_incomplete/2, delete_transients/2,
-         uuid_data/2, uuid_dflow/2]).
+         uuid_data/2, uuid_dflow/2, move_all/3, move_matching/4]).
 
 %%%===================================================================
 %%% API
@@ -84,10 +84,10 @@ delete(Data, {Stage, Module}) when not is_record(Data, dflow) ->
 
 delete_matching_data(Predicate, {Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
-    Q = qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
-                     X#dflow.module =:= Module, X#dflow.status =:= complete,
-                     Predicate(X#dflow.data)]),
+    Q = qh_matching_predicate(Table, Stage, Module, Predicate),
     fold(fun(D, Acc) -> mnesia:delete(Table, D#dflow.uuid, write), [D|Acc] end, [], Q).
+
+
 
 filter_data(Predicate, {Stage, Module}) ->
     Table = Module:table_for_stage(Stage),
@@ -116,15 +116,61 @@ all_data({Stage, Module}) ->
                     X#dflow.module =:= Module
        ])).  
 
-all({Stage, Module}) ->
-    Table = Module:table_for_stage(Stage),
-    do_q(qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
-                     X#dflow.module =:= Module
-       ])).
+all(DFlow) ->
+    do_q(all_query(DFlow)).
+
+move_all(FromStage, ToStage, Module) ->
+    move(all_query({FromStage, Module}), FromStage, ToStage, Module).
+
+move_matching(Predicate, FromStage, ToStage, Module) ->
+    QH = qh_matching_predicate(Module:table_for_stage(FromStage),
+                               FromStage, Module, Predicate),
+    move(QH, FromStage, ToStage, Module).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+qh_matching_predicate(Table, Stage, Module, Predicate) ->
+    qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+                 X#dflow.module =:= Module, X#dflow.status =:= complete,
+                 Predicate(X#dflow.data)]).
+
+
+move(_, Stage, Stage, _) ->
+    %% Clearly a mistake, do nothing
+    io:format("Cannot move from stage ~p to itself!",[Stage]);
+move(QH, FromStage, ToStage, Module) ->
+    FromTable = Module:table_for_stage(FromStage),
+    ToTable = Module:table_for_stage(ToStage),
+    do(fun() ->
+               QC = qlc:cursor(QH),
+               foreach_cursor_contents(
+                 fun(#dflow{data=Datum}=Rec) ->
+                         % io:format("Moving ~p from ~p to ~p~n",[Datum, FromStage, ToStage]),
+                         mnesia:delete({FromTable, Rec#dflow.uuid}),
+                         UUID = dflow:uuid(ToStage, Module, Datum),
+                         case mnesia:dirty_read(ToTable, UUID) of
+                             [] -> mnesia:write(ToTable, Rec#dflow{uuid=UUID,stage=ToStage}, write);
+                             [_X] -> exists
+                         end
+                 end, QC),
+               qlc:delete_cursor(QC)
+       end).
+
+foreach_cursor_contents(Fun, Cursor) ->
+    Answers = qlc:next_answers(Cursor),
+    case Answers of
+        [] -> none;
+        List -> lists:foreach(Fun, List),
+                foreach_cursor_contents(Fun, Cursor)
+    end.
+                    
+            
+all_query({Stage, Module}) ->
+    Table = Module:table_for_stage(Stage),
+    qlc:q([ X || X <- mnesia:table(Table), X#dflow.stage =:= Stage,
+                 X#dflow.module =:= Module
+          ]).
 
 fold(P, Acc0, Q) ->
     {atomic, Val} = mnesia:transaction(fun() -> qlc:fold(P, Acc0, Q) end),
@@ -141,8 +187,11 @@ foreach(P, Q) ->
     Val.
                                                 
 do(F) when is_function(F) ->
-    {atomic, Val} = mnesia:transaction(F),
-    Val.
+    case mnesia:transaction(F) of
+        {atomic, Val} -> Val;
+        Other -> io:format("Unknown result from txn: ~p~n",[Other]),
+                 error
+    end.
 
 do_async_dirty(F) when is_function(F) ->
     mnesia:async_dirty(F).

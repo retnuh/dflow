@@ -13,7 +13,7 @@
 
 %% API
 -export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
--export([uuid/3, sync/0, add_raw/1, recompute_uuid/2]).
+-export([uuid/3, sync/0, add_raw/1, recompute_uuid/2, unregister/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_cast/2, handle_info/2,  handle_call/3,
@@ -132,7 +132,10 @@ register_table(Table, Opts) ->
             io:format("Dflow: create_table for ~p returned ~p~n",[Table,_Ret]),
             created
     end.
-            
+
+unregister(Table) ->
+    %% Anything else to do?
+    {atomic, ok} = mnesia:delete_table(Table).
 
 
 %%%===================================================================
@@ -241,7 +244,7 @@ handle_cast(stop, State) ->
     {stop, "Stop received", State}.
 
 %%%===================================================================
-%%% Internal functions
+%%% Internal functions  
 %%%===================================================================
 inject_datum({Stage, DFlowMod}, Datum) ->
     UUID = uuid(Stage, DFlowMod, Datum),
