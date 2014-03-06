@@ -142,27 +142,26 @@ move(_, Stage, Stage, _) ->
 move(QH, FromStage, ToStage, Module) ->
     FromTable = Module:table_for_stage(FromStage),
     ToTable = Module:table_for_stage(ToStage),
-    do(fun() ->
+    do_async_dirty(fun() ->
                QC = qlc:cursor(QH),
                foreach_cursor_contents(
                  fun(#dflow{data=Datum}=Rec) ->
                          % io:format("Moving ~p from ~p to ~p~n",[Datum, FromStage, ToStage]),
                          mnesia:delete({FromTable, Rec#dflow.uuid}),
                          UUID = dflow:uuid(ToStage, Module, Datum),
-                         case mnesia:dirty_read(ToTable, UUID) of
-                             [] -> mnesia:write(ToTable, Rec#dflow{uuid=UUID,stage=ToStage}, write);
-                             [_X] -> exists
-                         end
-                 end, QC),
+                         mnesia:write(ToTable, Rec#dflow{uuid=UUID,stage=ToStage}, write)
+                 end, QC, 0),
                qlc:delete_cursor(QC)
        end).
 
-foreach_cursor_contents(Fun, Cursor) ->
-    Answers = qlc:next_answers(Cursor),
+foreach_cursor_contents(Fun, Cursor, SoFar) ->
+    Answers = qlc:next_answers(Cursor, 1000),
+    Total = SoFar + length(Answers),
     case Answers of
         [] -> none;
-        List -> lists:foreach(Fun, List),
-                foreach_cursor_contents(Fun, Cursor)
+        List -> do(fun()-> lists:foreach(Fun, List) end),
+                io:format("\tMigrated ~p total entries~n",[Total]),
+                foreach_cursor_contents(Fun, Cursor, Total)
     end.
                     
             
