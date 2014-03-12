@@ -6,7 +6,8 @@
   {applications, [
                   kernel,
                   stdlib, 
-                  mnesia
+                  mnesia,
+                  qdate
                  ]},
   {mod, { dflow_app, []}},
   {env, []}

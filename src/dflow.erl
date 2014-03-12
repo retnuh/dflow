@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, add_data/2, add_datum/2, register/1, return_result/2, stop/0]).
+-export([start_link/0, add_data/2, add_datum/2, add_datum/3, register/1, return_result/2, stop/0]).
 -export([uuid/3, sync/0, add_raw/1, recompute_uuid/2, unregister/1]).
 
 %% gen_server callbacks
@@ -54,6 +54,12 @@ sync() ->
 %%--------------------------------------------------------------------
 add_datum({_Stage, _DFlowModule}=DFlow, Datum) ->
     gen_server:call(?SERVER, {add_datum, DFlow, Datum}).
+
+add_datum(DFlow, Datum, []) ->
+    add_datum(DFlow, Datum);
+add_datum(DFlow, Datum, Date) ->
+    gen_server:call(?SERVER, {add_datum, DFlow, Datum, qdate:to_now(Date)}).
+    
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -174,6 +180,9 @@ handle_call(sync, _From, State) ->
     {reply, ok, State};
 handle_call({add_datum, DFlow, Datum}, _From, State) ->
     [Res] = run_transactions([inject_datum(DFlow, Datum)]),
+    {reply, Res, State};
+handle_call({add_datum, DFlow, Datum, NowTime}, _From, State) ->
+    [Res] = run_transactions([set_datum(DFlow, Datum, NowTime)]),
     {reply, Res, State}.
 
 
@@ -246,6 +255,20 @@ handle_cast(stop, State) ->
 %%%===================================================================
 %%% Internal functions  
 %%%===================================================================
+set_datum({Stage, DFlowMod}, Datum, NowTime) ->
+    UUID = uuid(Stage, DFlowMod, Datum),
+    Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,
+        completed=NowTime,created=NowTime,status=complete},
+    Table = DFlowMod:table_for_stage(Stage),
+    Txn = fun() ->
+                  case mnesia:dirty_read(Table, UUID) of
+                      [] -> mnesia:write(Table, Rec, write),
+                            {inserted, Rec};
+                      [X] -> {exists, X}
+                  end
+          end,
+    { Txn, [] }.
+
 inject_datum({Stage, DFlowMod}, Datum) ->
     UUID = uuid(Stage, DFlowMod, Datum),
     Rec = #dflow{uuid=UUID,stage=Stage,module=DFlowMod,data=Datum,created=now(),status=created},
